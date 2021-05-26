@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <ctype.h>
 
 #define CTRL(c) ((c) & 0x1f)
 
@@ -53,6 +54,28 @@ typedef struct {
 } buf;
 
 #define BUF_INIT {NULL, 0}
+
+void displayBuf(buf* b)
+{
+    move(0, 0);
+    for(int i = 0; i < b->len; i++)
+    {
+        char c = b->data[i];
+        if(isdigit(c))
+        {
+            start_color();
+            init_pair(1, COLOR_RED, -1);
+            attron(COLOR_PAIR(1));
+            addch(c);
+            attroff(COLOR_PAIR(1));
+            use_default_colors();
+        }
+        else addch(c);
+    }
+    refresh();
+    //mvprintw(0, 0, b->data);
+
+}
 
 void appendBuf(buf* b, const char* str, int len)
 {
@@ -119,7 +142,7 @@ void refreshScreen(FileData* fd)
 
     // get row data and output to screen
     drawRows(&b);
-    mvprintw(0, 0, b.data);
+    displayBuf(&b);
 
     drawStatusLine();
     move(e.y, e.x);
@@ -223,6 +246,13 @@ void editorSetStatusMessage(const char* fmt, ...)
     va_end(ap);
 }
 
+void editorFree()
+{
+    for(int i = 0; i < e.fd->len; i++) free(e.fd->rows[i].data);
+    free(e.fd->rows);
+    free(e.fd);
+}
+
 /** input **/
 void moveCursor(int c)
 {
@@ -315,6 +345,7 @@ int main(int argc, char* argv[])
     raw();
     keypad(stdscr, TRUE);
 
+
     int nrows = getmaxy(stdscr);
     int ncols = getmaxx(stdscr);
 
@@ -333,6 +364,7 @@ int main(int argc, char* argv[])
 
     writeToFile();
     
+    editorFree();
     endwin();
     return 0;
 }
