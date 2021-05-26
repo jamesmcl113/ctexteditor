@@ -19,12 +19,14 @@ typedef struct {
     int of;
     char fl[128];
     char commandBuf[3];
+    char statusmsg[64];
     FileData* fd;
 } Editor;
 
 void editorInit(Editor* e, int nrows, int ncols, char* fl);
 void editorDie(const char* err);
 void editorInsertChar(erow* row, int at, char c);
+void editorDelChar(erow* row, int at);
 
 FileData* openFile(char* fn);
 

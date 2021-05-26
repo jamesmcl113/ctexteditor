@@ -12,6 +12,7 @@ void editorInit(Editor* e, int nrows, int ncols, char* fl)
     e->nrows = nrows;
     e->ncols = ncols;
     e->of = 0;
+    e->statusmsg[0] = '\0';
     strcpy(e->fl, fl);
     e->fd = openFile(fl);
 }
@@ -33,9 +34,22 @@ void editorInsertChar(erow* row, int at, char c)
     row->data[row->length] = '\0';
 }   
 
+void editorDelChar(erow* row, int at)
+{
+    if(at < 0 || at >= row->length) return;
+    memmove(&row->data[at], &row->data[at + 1], row->length - at);
+    row->length--;
+}
+
 FileData* openFile(char* fn)
 {
-    if(!strcmp(fn, "NONE")) return NULL;
+    if(!strcmp(fn, "NONE"))
+    {
+        FileData* fd = malloc(sizeof *fd);
+        fd->len = 0;
+        fd->rows = NULL;
+        return fd;
+    }
 
     FILE* fp = fopen(fn, "rb");
     if(fp == NULL) editorDie("fopen");

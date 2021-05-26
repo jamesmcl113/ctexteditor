@@ -2,6 +2,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdarg.h>
 
 #include "editor.h"
 
@@ -94,7 +95,9 @@ void handleKeypress(int c)
 {
     if(c == KEY_DOWN || c == KEY_UP || c == KEY_RIGHT || c == KEY_LEFT) moveCursor(c);
     //else executeCommand(c);
-    else if(c > 31) editorInsertChar(&e.fd->rows[e.y + e.of], e.x, c);
+    else if(c == 127) editorDelChar(&e.fd->rows[e.y + e.of], e.x);
+    else if(c > 31 && e.fd->len > 0) editorInsertChar(&e.fd->rows[e.y + e.of], e.x, c);
+    mvprintw(0, 0, "%i", c);
 }
 
 void moveCursor(int c)
@@ -117,26 +120,31 @@ void moveCursor(int c)
         case KEY_DOWN:
             if(e.y + e.of == e.fd->len - 1) ;
             else if(e.y == nrows - 2 && e.y + e.of < e.fd->len) e.of++;
+            else if(e.y == nrows - 2 && e.fd->len < nrows - 2) ;
             else e.y++;
             break;
         case KEY_LEFT:
-            if(e.x <= 0)
-            { 
-                e.x = 0;
-                if(e.y > 0) 
+            if(e.fd->len > 0) {
+                if(e.x <= 0)
                 { 
-                    e.y--;
-                    e.x = e.fd->rows[e.y + e.of].length - 1;
-                }
-            } else e.x--;
+                    e.x = 0;
+                    if(e.y > 0) 
+                    { 
+                        e.y--;
+                        e.x = e.fd->rows[e.y + e.of].length - 1;
+                    }
+                } else e.x--;
+            }
             break;
         case KEY_RIGHT:
-            if(e.x == e.fd->rows[e.y + e.of].length - 1 && e.y + e.of < e.fd->len - 1)
-            {
-                e.y++;
-                e.x = 0;
-            } else if(e.x == e.fd->rows[e.y + e.of].length - 1) ;
-            else e.x++;
+            if(e.fd->len > 0) {
+                if(e.x == e.fd->rows[e.y + e.of].length - 1 && e.y + e.of < e.fd->len - 1)
+                {
+                    e.y++;
+                    e.x = 0;
+                } else if(e.x == e.fd->rows[e.y + e.of].length - 1) ;
+                else e.x++;
+            }
             break;
         case '.':
             e.of = maxOffset;
@@ -150,9 +158,31 @@ void moveCursor(int c)
             return;
     }
 
-    if(e.x > e.fd->rows[e.y + e.of].length - 1) e.x = e.fd->rows[e.y + e.of].length - 1;
+    if(e.fd->len > 0) {
+        if(e.x > e.fd->rows[e.y + e.of].length - 1) e.x = e.fd->rows[e.y + e.of].length - 1;
+    }
 
     move(e.y, e.x);
+}
+
+void setStatusMessage(const char* fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(e.statusmsg, sizeof(e.statusmsg), fmt, ap);
+    va_end(ap);
+}
+
+void drawStatusLine()
+{
+    attrset(A_BOLD);
+    move(e.nrows - 1, 0);
+    clrtoeol();
+    mvprintw(e.nrows - 1, 0, "> %s", e.fl);
+    mvprintw(e.nrows - 1, e.ncols / 4, "%d , %d / %d", e.y + e.of + 1, e.x + 1, e.fd->len);
+    mvprintw(e.nrows - 1, e.ncols / 2, "|");
+    mvprintw(e.nrows - 1, (e.ncols / 2) + 4, "%s", e.statusmsg);
+    attrset(A_NORMAL);
 }
 
 void refreshScreen(FileData* fd)
@@ -163,15 +193,7 @@ void refreshScreen(FileData* fd)
     drawRows(&b);
     mvprintw(0, 0, b.data);
 
-    // status line
-    attrset(A_BOLD);
-    move(e.nrows - 1, 0);
-    clrtoeol();
-    mvprintw(e.nrows - 1, 0, "> %s", e.fl);
-    mvprintw(e.nrows - 1, e.ncols / 2, "%d , %d", e.y + e.of + 1, e.x + 1);
-    mvprintw(e.nrows - 1, e.ncols - (e.ncols / 3), "%s", e.commandBuf);
-    attrset(A_NORMAL);
-
+    drawStatusLine();
     move(e.y, e.x);
 }
 
@@ -187,6 +209,8 @@ int main(int argc, char* argv[])
 
     if(argc == 2) editorInit(&e, nrows, ncols, argv[1]);
     else editorInit(&e, nrows, ncols, "NONE");
+
+    setStatusMessage("HELP: CTRL-Q to quit");
 
     int c;
     refreshScreen(e.fd);
