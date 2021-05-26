@@ -6,6 +6,8 @@
 
 #define CTRL(c) ((c) & 0x1f)
 
+#define VERSION "0.0.1"
+
 /*
 TODO:
     Add file saving, output etc..
@@ -27,14 +29,15 @@ typedef struct {
     int y;
     int nrows;
     int ncols;
-    int of;
+    int hof;
+    int vof;
+    int eflag;
     char fl[128];
     char statusmsg[64];
     FileData* fd;
 } Editor;
 
 Editor e;
-int editFlag = 0;
 
 void die(const char *s)
 {
@@ -51,14 +54,14 @@ typedef struct {
 
 #define BUF_INIT {NULL, 0}
 
-void appendBuf(buf* b, char* str)
+void appendBuf(buf* b, const char* str, int len)
 {
-    char* new = realloc(b->data, b->len + strlen(str));
+    char* new = realloc(b->data, b->len + len);
     if(new == NULL) die("realloc buf");
 
-    memcpy(&new[b->len], str, strlen(str));
+    memcpy(&new[b->len], str, len);
     b->data = new;
-    b->len += strlen(str);
+    b->len += len;
 }
 
 void freeBuf(buf* b)
@@ -75,23 +78,26 @@ void drawRows(buf* b)
         clrtoeol();
 
         // draw welcome message
-        if(i == e.nrows / 3 && !strcmp(e.fl, "NO FILE"))
+        if(i == e.nrows / 3 && !strcmp(e.fl, "NONE"))
         {
-            char msg[] = "*------ XEDITOR V0.0.1 ------*\n";
+            char msg[80];
+            sprintf(msg, "Editor ---- version %s\n", VERSION);
             int padding = (e.ncols - strlen(msg)) / 2;
             if(padding)
             {
-                appendBuf(b, "~");
+                appendBuf(b, "~", 1);
                 padding--;
             }
-            while(padding--) appendBuf(b, " ");
-            appendBuf(b, msg);
+            while(padding--) appendBuf(b, " ", 1);
+            appendBuf(b, msg, strlen(msg));
         } else if(i < e.fd->len) {
-            if(strlen(e.fd->rows[i + e.of].data) > e.ncols) e.fd->rows[i + e.of].data[e.ncols - 1] = 0;
-            appendBuf(b, e.fd->rows[i + e.of].data);
-            appendBuf(b, "\n");
+            int len = e.fd->rows[i + e.vof].length - e.hof;
+            if(len < 0) len = 0;
+            if(len > e.ncols) len = e.ncols - 1;
+            appendBuf(b, &e.fd->rows[i + e.vof].data[e.hof], len);
+            appendBuf(b, "\n", 1);
         }  else {
-            appendBuf(b, "~\n");
+            appendBuf(b, "~\n", 2);
         }
     }
 }
@@ -101,9 +107,8 @@ void drawStatusLine()
     attrset(A_BOLD);
     move(e.nrows - 1, 0);
     clrtoeol();
-    mvprintw(e.nrows - 1, 0, "> [%s], %d lines", e.fl, e.fd->len);
-    mvprintw(e.nrows - 1, e.ncols / 2, "%d , %d", e.y + e.of + 1, e.x + 1);
-    //mvprintw(e.nrows - 1, e.ncols / 2, "|");
+    mvprintw(e.nrows - 1, 0, "> [%s] - %d lines", e.fl, e.fd->len);
+    mvprintw(e.nrows - 1, e.ncols / 2, "%4d , %d", e.y + e.vof + 1, e.x + 1);
     mvprintw(e.nrows - 1, e.ncols - 30, "%s", e.statusmsg);
     attrset(A_NORMAL);
 }
@@ -163,6 +168,21 @@ FileData* openFile(char* fn)
     return fd;
 }
 
+void writeToFile()
+{
+    if(e.fd->len == 0) return;
+
+    FILE* fp = fopen(e.fl, "w");
+    if(fp == NULL) die("couldn't open file!");
+
+    for(int i = 0; i < e.fd->len; i++)
+    {
+        fprintf(fp, "%s\n", e.fd->rows[i].data);
+    }
+
+    fclose(fp);
+}
+
 /** editor operations **/
 void editorInit(char* fl)
 {
@@ -170,7 +190,9 @@ void editorInit(char* fl)
     e.y = 0;
     e.nrows = getmaxy(stdscr);
     e.ncols = getmaxx(stdscr);
-    e.of = 0;
+    e.hof = 0;
+    e.vof = 0;
+    e.eflag = 0;
     e.statusmsg[0] = '\0';
     strcpy(e.fl, fl);
     e.fd = openFile(fl);
@@ -216,12 +238,12 @@ void moveCursor(int c)
         case KEY_UP:
             if(e.y <= 0) {
                 e.y = 0;
-                if(e.of > 0) e.of--;
+                if(e.vof > 0) e.vof--;
             } else e.y--;
             break;
         case KEY_DOWN:
-            if(e.y + e.of == e.fd->len - 1) ;
-            else if(e.y == nrows - 2 && e.y + e.of < e.fd->len) e.of++;
+            if(e.y + e.vof == e.fd->len - 1) ;
+            else if(e.y == nrows - 2 && e.y + e.vof < e.fd->len) e.vof++;
             else if(e.y == nrows - 2 && e.fd->len < nrows - 2) ;
             else e.y++;
             break;
@@ -230,38 +252,46 @@ void moveCursor(int c)
                 if(e.x <= 0)
                 { 
                     e.x = 0;
-                    if(e.y > 0) 
+                    if(e.hof > 0) e.hof--;
+                    else if(e.y > 0) 
                     { 
                         e.y--;
-                        e.x = e.fd->rows[e.y + e.of].length - 1;
-                    }
+                        e.x = e.fd->rows[e.y + e.vof].length - 1;
+                        if(e.x > ncols - 1) {e.hof = e.fd->rows[e.y + e.vof].length - ncols; e.x = ncols - 1; }
+                    } 
                 } else e.x--;
             }
             break;
         case KEY_RIGHT:
             if(e.fd->len > 0) {
-                if(e.x == e.fd->rows[e.y + e.of].length - 1 && e.y + e.of < e.fd->len - 1)
+                if(e.x + e.hof == e.fd->rows[e.y + e.vof].length - 1 && e.y + e.vof < e.fd->len - 1)
                 {
                     e.y++;
                     e.x = 0;
-                } else if(e.x == e.fd->rows[e.y + e.of].length - 1) ;
+                    e.hof = 0;
+                } else if(e.x + e.hof == e.fd->rows[e.y + e.vof].length - 1) ;
+                else if(e.x == ncols - 1) e.hof++;
                 else e.x++;
             }
             break;
         case '.':
-            e.of = maxOffset;
+            e.vof = maxOffset;
             e.y = nrows - 2;
             break;
         case '/':
-            e.of = 0;
+            e.vof = 0;
             e.y = 0;
             break;
         default:
             return;
     }
-
+    
+    // change position/offset of cursor if we've moved to a short line
     if(e.fd->len > 0) {
-        if(e.x > e.fd->rows[e.y + e.of].length - 1) e.x = e.fd->rows[e.y + e.of].length - 1;
+        if(e.x > e.fd->rows[e.y + e.vof].length - 1) {
+            e.x = e.fd->rows[e.y + e.vof].length - 1;
+            if(e.fd->rows[e.y + e.vof].length < ncols) e.hof = 0;
+        }
     }
 
     move(e.y, e.x);
@@ -270,11 +300,11 @@ void moveCursor(int c)
 void handleKeypress(int c)
 {
     if(c == KEY_DOWN || c == KEY_UP || c == KEY_RIGHT || c == KEY_LEFT) moveCursor(c);
-    else if(c == CTRL('j')) moveCursor('.');
-    else if(c == CTRL('k')) moveCursor('/');
-    else if(c == CTRL('e')) {editFlag = !editFlag; editorSetStatusMessage("EDIT MODE %s", editFlag ? "ON" : "OFF"); }
-    else if(c == 127 && editFlag) editorDelChar(&e.fd->rows[e.y + e.of], e.x);
-    else if(c > 31 && e.fd->len > 0 && editFlag) editorInsertChar(&e.fd->rows[e.y + e.of], e.x, c);
+    else if(c == CTRL('j')) moveCursor('.'); // jump to bottom
+    else if(c == CTRL('k')) moveCursor('/'); // jump to top
+    else if(c == CTRL('e')) {e.eflag = !e.eflag; editorSetStatusMessage("EDIT MODE %s", e.eflag ? "ON" : "OFF"); }
+    else if(c == 127 && e.eflag) editorDelChar(&e.fd->rows[e.y + e.vof], e.x);
+    else if(c > 31 && e.fd->len > 0 && e.eflag) editorInsertChar(&e.fd->rows[e.y + e.vof], e.x, c);
 }
 
 /** init **/
@@ -300,6 +330,8 @@ int main(int argc, char* argv[])
         handleKeypress(c);
         refreshScreen(e.fd);
     }
+
+    writeToFile();
     
     endwin();
     return 0;
