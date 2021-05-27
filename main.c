@@ -132,7 +132,7 @@ void drawStatusLine()
     clrtoeol();
     mvprintw(e.nrows - 1, 0, "> [%s] - %d lines", e.fl, e.fd->len);
     mvprintw(e.nrows - 1, e.ncols / 2, "%4d , %d", e.y + e.vof + 1, e.x + 1);
-    mvprintw(e.nrows - 1, e.ncols - 30, "%s", e.statusmsg);
+    mvprintw(e.nrows - 1, e.ncols - 35, "%s", e.statusmsg);
     attrset(A_NORMAL);
 }
 
@@ -221,6 +221,11 @@ void editorInit(char* fl)
     e.fd = openFile(fl);
 }
 
+int editorReadKey() {
+    int c = getch();
+    return c;
+}
+
 void editorInsertChar(erow* row, int at, char c)
 {
     if(at < 0 || at > row->length) at = row->length;
@@ -244,6 +249,40 @@ void editorSetStatusMessage(const char* fmt, ...)
     va_start(ap, fmt);
     vsnprintf(e.statusmsg, sizeof(e.statusmsg), fmt, ap);
     va_end(ap);
+}
+
+char* editorPrompt(char* prompt)
+{
+    size_t bufsize = 128;
+    char* buf = malloc(bufsize);
+
+    size_t buflen = 0;
+    buf[0] = '\0';
+
+    while(1)
+    {
+        editorSetStatusMessage(prompt, buf);
+        refreshScreen(e.fd);
+
+        int c = editorReadKey();
+        if(c == '\n' || c == '\r')
+        {
+            if(buflen != 0)
+            {
+                editorSetStatusMessage("");
+                return buf;
+            }
+        } else if (!iscntrl(c) && c < 128)
+        {
+            if(buflen == bufsize - 1)
+            {
+                bufsize *= 2;
+                buf = realloc(buf, bufsize);
+            }
+            buf[buflen++] = c;
+            buf[buflen] = '\0';
+        }
+    }
 }
 
 void editorFree()
@@ -327,14 +366,46 @@ void moveCursor(int c)
     move(e.y, e.x);
 }
 
-void handleKeypress(int c)
+int handleKeypress()
 {
-    if(c == KEY_DOWN || c == KEY_UP || c == KEY_RIGHT || c == KEY_LEFT) moveCursor(c);
-    else if(c == CTRL('j')) moveCursor('.'); // jump to bottom
-    else if(c == CTRL('k')) moveCursor('/'); // jump to top
-    else if(c == CTRL('e')) {e.eflag = !e.eflag; editorSetStatusMessage("EDIT MODE %s", e.eflag ? "ON" : "OFF"); }
-    else if(c == 127 && e.eflag) editorDelChar(&e.fd->rows[e.y + e.vof], e.x);
-    else if(c > 31 && e.fd->len > 0 && e.eflag) editorInsertChar(&e.fd->rows[e.y + e.vof], e.x, c);
+    int c = editorReadKey();
+    switch(c)
+    {
+        case CTRL('q'):
+            return 1;
+            break;
+        
+        case KEY_DOWN:
+        case KEY_LEFT:
+        case KEY_UP:
+        case KEY_RIGHT:
+            moveCursor(c);
+            break;
+        case CTRL('j'):
+            moveCursor('.');
+            break;
+        case CTRL('k'):
+            moveCursor('/');
+            break;
+        
+        case CTRL('e'):
+            e.eflag = !e.eflag; 
+            editorSetStatusMessage("EDIT MODE %s", e.eflag ? "ON" : "OFF");
+            break;
+
+        case 127:
+            if(e.eflag) editorDelChar(&e.fd->rows[e.y + e.vof], e.x);
+            break;
+        
+        default:
+            if(c > 31 && e.fd->len > 0 && e.eflag)
+            {
+                editorInsertChar(&e.fd->rows[e.y + e.vof], e.x, c);
+            }
+            break;
+        
+    }
+    return 0;
 }
 
 /** init **/
@@ -354,15 +425,14 @@ int main(int argc, char* argv[])
 
     editorSetStatusMessage("HELP: CTRL-Q to quit");
 
-    int c;
+    int q;
     refreshScreen(e.fd);
-    while((c = getch()) != CTRL('q'))
+    while(1)
     {
-        handleKeypress(c);
+        q = handleKeypress();
         refreshScreen(e.fd);
+        if(q) break;
     }
-
-    writeToFile();
     
     editorFree();
     endwin();
