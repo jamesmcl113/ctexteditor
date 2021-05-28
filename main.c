@@ -42,8 +42,8 @@ Editor e;
 
 void die(const char *s)
 {
-    perror(s);
     endwin();
+    perror(s);
     exit(1);
 }
 
@@ -68,6 +68,14 @@ void displayBuf(buf* b)
             attron(COLOR_PAIR(1));
             addch(c);
             attroff(COLOR_PAIR(1));
+            use_default_colors();
+        } else if(c == '\'' || c == '"' || c == ';')
+        {
+            start_color();
+            init_pair(2, COLOR_CYAN, -1);
+            attron(COLOR_PAIR(2));
+            addch(c);
+            attroff(COLOR_PAIR(2));
             use_default_colors();
         }
         else addch(c);
@@ -136,7 +144,7 @@ void drawStatusLine()
     attrset(A_NORMAL);
 }
 
-void refreshScreen(FileData* fd)
+void refreshScreen()
 {
     buf b = BUF_INIT;
 
@@ -191,11 +199,34 @@ FileData* openFile(char* fn)
     return fd;
 }
 
+FileData* newEmptyFile()
+{
+    FileData* fd = malloc(sizeof *fd);
+    if(fd == NULL) die("malloc filedata");
+
+    fd->len = 1;
+    fd->rows = malloc(fd->len * sizeof(erow));
+
+    erow* r = &fd->rows[0];
+    r->data = malloc(2);
+    r->data[0] = ' ';
+    r->data[1] = '\0';
+    r->length = 1;
+
+    return fd;
+}
+
 void writeToFile()
 {
-    if(e.fd->len == 0) return;
-
     FILE* fp = fopen(e.fl, "w");
+
+    if(e.fd->len == 0)
+    {
+        fprintf(fp, "");
+        fclose(fp);
+        return;
+    }
+
     if(fp == NULL) die("couldn't open file!");
 
     for(int i = 0; i < e.fd->len; i++)
@@ -223,77 +254,15 @@ void editorInit(char* fl)
 
 int editorReadKey() {
     int c = getch();
+    /*
+    clrtoeol();
+    mvprintw(0, 0, "%c", c);
+    getch();
+    */
     return c;
 }
 
-void editorInsertChar(erow* row, int at, char c)
-{
-    if(at < 0 || at > row->length) at = row->length;
-    row->data = realloc(row->data, row->length + 2);
-    memmove(&row->data[at + 1], &row->data[at], row->length - at + 1);
-    row->length++;
-    row->data[at] = c;
-    row->data[row->length] = '\0';
-}   
-
-void editorDelChar(erow* row, int at)
-{
-    if(at < 0 || at >= row->length) return;
-    memmove(&row->data[at], &row->data[at + 1], row->length - at);
-    row->length--;
-}
-
-void editorSetStatusMessage(const char* fmt, ...)
-{
-    va_list ap;
-    va_start(ap, fmt);
-    vsnprintf(e.statusmsg, sizeof(e.statusmsg), fmt, ap);
-    va_end(ap);
-}
-
-char* editorPrompt(char* prompt)
-{
-    size_t bufsize = 128;
-    char* buf = malloc(bufsize);
-
-    size_t buflen = 0;
-    buf[0] = '\0';
-
-    while(1)
-    {
-        editorSetStatusMessage(prompt, buf);
-        refreshScreen(e.fd);
-
-        int c = editorReadKey();
-        if(c == '\n' || c == '\r')
-        {
-            if(buflen != 0)
-            {
-                editorSetStatusMessage("");
-                return buf;
-            }
-        } else if (!iscntrl(c) && c < 128)
-        {
-            if(buflen == bufsize - 1)
-            {
-                bufsize *= 2;
-                buf = realloc(buf, bufsize);
-            }
-            buf[buflen++] = c;
-            buf[buflen] = '\0';
-        }
-    }
-}
-
-void editorFree()
-{
-    for(int i = 0; i < e.fd->len; i++) free(e.fd->rows[i].data);
-    free(e.fd->rows);
-    free(e.fd);
-}
-
-/** input **/
-void moveCursor(int c)
+void editorMoveCursor(int c)
 {
     int ncols, nrows, y, x;
     getmaxyx(stdscr, nrows, ncols);
@@ -326,26 +295,31 @@ void moveCursor(int c)
                     { 
                         e.y--;
                         e.x = e.fd->rows[e.y + e.vof].length - 1;
-                        if(e.x > ncols - 1) {e.hof = e.fd->rows[e.y + e.vof].length - ncols; e.x = ncols - 1; }
+                        if(e.x > ncols - 1)
+                        {
+                            e.hof = e.fd->rows[e.y + e.vof].length - ncols;
+                            e.x = ncols - 1; 
+                        }
                     } 
                 } else e.x--;
             }
             break;
         case KEY_RIGHT:
             if(e.fd->len > 0) {
-                if(e.x + e.hof == e.fd->rows[e.y + e.vof].length - 1 && e.y + e.vof < e.fd->len - 1)
+                if(e.x + e.hof == e.fd->rows[e.y + e.vof].length - 1
+                    && e.y + e.vof < e.fd->len - 1)
                 {
                     e.y++;
                     e.x = 0;
                     e.hof = 0;
                 } else if(e.x + e.hof == e.fd->rows[e.y + e.vof].length - 1) ;
                 else if(e.x == ncols - 1) e.hof++;
-                else e.x++;
+                else if(e.x < e.fd->rows[e.y + e.vof].length) e.x++;
             }
             break;
         case '.':
             e.vof = maxOffset;
-            e.y = nrows - 2;
+            e.y = nrows - 2 > e.fd->len ? e.fd->len - 1 : nrows - 2;
             break;
         case '/':
             e.vof = 0;
@@ -357,7 +331,7 @@ void moveCursor(int c)
     
     // change position/offset of cursor if we've moved to a short line
     if(e.fd->len > 0) {
-        if(e.x > e.fd->rows[e.y + e.vof].length - 1) {
+        if(e.x + e.hof > e.fd->rows[e.y + e.vof].length) {
             e.x = e.fd->rows[e.y + e.vof].length - 1;
             if(e.fd->rows[e.y + e.vof].length < ncols) e.hof = 0;
         }
@@ -366,6 +340,129 @@ void moveCursor(int c)
     move(e.y, e.x);
 }
 
+void editorInsertChar(erow* row, int at, char c)
+{
+    if(at < 0 || at > row->length) at = row->length;
+
+    row->data = realloc(row->data, row->length + 2);
+    memmove(&row->data[at + 1], &row->data[at],
+            row->length - at + 1);
+    row->length++;
+    row->data[at] = c;
+    row->data[row->length] = '\0';
+}   
+
+void editorDelChar(erow* row, int at)
+{
+    if(at < 0 || at >= row->length) return;
+    memmove(&row->data[at], &row->data[at + 1], row->length - at);
+    row->length--;
+    editorMoveCursor(KEY_LEFT);
+}
+
+void editorSetStatusMessage(const char* fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(e.statusmsg, sizeof(e.statusmsg), fmt, ap);
+    va_end(ap);
+}
+
+char* editorPrompt(char* prompt)
+{
+    size_t bufsize = 128;
+    char* buf = malloc(bufsize);
+
+    size_t buflen = 0;
+    buf[0] = '\0';
+
+    while(1)
+    {
+        editorSetStatusMessage(prompt, buf);
+        refreshScreen();
+
+        int c = editorReadKey();
+        if(c == '\n' || c == '\r')
+        {
+            if(buflen != 0)
+            {
+                editorSetStatusMessage("");
+                return buf;
+            }
+        } else if (!iscntrl(c) && c < 128)
+        {
+            if(buflen == bufsize - 1)
+            {
+                bufsize *= 2;
+                buf = realloc(buf, bufsize);
+            }
+            buf[buflen++] = c;
+            buf[buflen] = '\0';
+        }
+    }
+}
+
+void editorCreateFile(char* fn)
+{
+    FileData* fd = newEmptyFile();
+    strcpy(e.fl, fn);
+    e.fd = fd;
+    //editorInsertChar(&e.fd->rows[0], 0, ' ');
+    refreshScreen();
+    return;
+}
+
+void editorFreeRow(erow* row)
+{
+    free(row->data);
+    row->length = 0;
+}
+
+void editorDelRow(int at)
+{
+    if(at < 0 || at >= e.fd->len) return;
+
+    editorFreeRow(&e.fd->rows[at]);
+    memmove(&e.fd->rows[at], &e.fd->rows[at + 1], 
+            sizeof(erow) * (e.fd->len - at - 1));
+    e.fd->len--;
+}
+
+void editorAppendStringToRow(int at, char* s, size_t len)
+{
+    if(at < 0 || at >= e.fd->len) return;
+
+    erow* r = &e.fd->rows[at];
+    r->data = realloc(r->data, r->length + len + 1);
+    memcpy(&r->data[r->length], s, len);
+    r->data[len + r->length] = '\0';
+    r->length += len;
+}
+
+void editorAddRow(int at, char* s, size_t len)
+{
+    if(at < 0 || at >= e.fd->len) at = 0;
+
+    e.fd->rows = realloc(e.fd->rows, (e.fd->len + 1) * sizeof(erow));
+    memmove(&e.fd->rows[at + 1], &e.fd->rows[at], (e.fd->len - at) * sizeof(erow));
+
+    erow* r = &e.fd->rows[at];
+    r->length = len;
+    r->data = malloc(len + 1);
+    memcpy(r->data, s, len);
+    r->data[len] = '\0';
+
+    e.fd->len++;
+}  
+
+void editorFree()
+{
+    for(int i = 0; i < e.fd->len; i++) editorFreeRow(&e.fd->rows[i]);
+    free(e.fd->rows);
+    free(e.fd);
+}
+
+/** input **/
 int handleKeypress()
 {
     int c = editorReadKey();
@@ -379,28 +476,65 @@ int handleKeypress()
         case KEY_LEFT:
         case KEY_UP:
         case KEY_RIGHT:
-            moveCursor(c);
+            editorMoveCursor(c);
             break;
-        case CTRL('j'):
-            moveCursor('.');
+        case CTRL('l'):
+            editorMoveCursor('.');
             break;
         case CTRL('k'):
-            moveCursor('/');
+            //editorMoveCursor('/');
+            editorAppendStringToRow(0, "sandwich", 8);
             break;
         
+        case CTRL('a'):
+            if(!e.eflag) editorMoveCursor(KEY_RIGHT);
         case CTRL('e'):
+            if(!strcmp(e.fl, "NONE")) editorCreateFile("empty.txt"); 
+            // we should really add a new line here, add some variable to check
+            // if we started by opening a file or are creating a brand new one
+            // also create a switchEditMode function
+
             e.eflag = !e.eflag; 
             editorSetStatusMessage("EDIT MODE %s", e.eflag ? "ON" : "OFF");
             break;
 
+        case CTRL('d'):
+            editorDelRow(e.y + e.vof);
+            break;
+
+        case CTRL('o'):
+            editorAddRow(e.y + e.vof, " ", 1);
+            e.eflag = 1;
+            editorSetStatusMessage("EDIT MODE %s", e.eflag ? "ON" : "OFF");
+            break;
+        
+        case CTRL('s'):
+            writeToFile();
+            editorSetStatusMessage("Saved %s!", e.fl);
+            break;
+
         case 127:
-            if(e.eflag) editorDelChar(&e.fd->rows[e.y + e.vof], e.x);
+            if(e.eflag) 
+            {
+                if(e.x == 0 && e.y > 0) 
+                {   
+                    editorMoveCursor(KEY_LEFT);
+                    editorAppendStringToRow(e.y + e.vof, e.fd->rows[e.y + e.vof + 1].data, e.fd->rows[e.y + e.vof + 1].length);
+                    editorDelRow(e.y + e.vof + 1);
+                }
+                else editorDelChar(&e.fd->rows[e.y + e.vof], e.x - 1);
+            }
+            break;
+
+        case '\n':
             break;
         
         default:
             if(c > 31 && e.fd->len > 0 && e.eflag)
             {
+                //if(e.x == 0) editorInsertChar(&e.fd->rows[e.y + e.vof], e.x, ' ');
                 editorInsertChar(&e.fd->rows[e.y + e.vof], e.x, c);
+                editorMoveCursor(KEY_RIGHT);
             }
             break;
         
@@ -426,11 +560,11 @@ int main(int argc, char* argv[])
     editorSetStatusMessage("HELP: CTRL-Q to quit");
 
     int q;
-    refreshScreen(e.fd);
+    refreshScreen();
     while(1)
     {
         q = handleKeypress();
-        refreshScreen(e.fd);
+        refreshScreen();
         if(q) break;
     }
     
