@@ -407,7 +407,6 @@ void editorCreateFile(char* fn)
     FileData* fd = newEmptyFile();
     strcpy(e.fl, fn);
     e.fd = fd;
-    //editorInsertChar(&e.fd->rows[0], 0, ' ');
     refreshScreen();
     return;
 }
@@ -454,6 +453,13 @@ void editorAddRow(int at, char* s, size_t len)
 
     e.fd->len++;
 }  
+
+void editorSaveFileAs()
+{
+    char* name = editorPrompt("Save file as: %s");
+    strcpy(e.fl, name);
+    writeToFile();
+}
 
 void editorFree()
 {
@@ -509,7 +515,8 @@ int handleKeypress()
             break;
         
         case CTRL('s'):
-            writeToFile();
+            // add a flag to see if this is an exisiting file or not
+            editorSaveFileAs();
             editorSetStatusMessage("Saved %s!", e.fl);
             break;
 
@@ -551,8 +558,6 @@ int main(int argc, char* argv[])
     keypad(stdscr, TRUE);
 
 
-    int nrows = getmaxy(stdscr);
-    int ncols = getmaxx(stdscr);
 
     if(argc == 2) editorInit(argv[1]);
     else editorInit("NONE");
