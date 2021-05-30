@@ -306,15 +306,15 @@ void editorMoveCursor(int c)
             break;
         case KEY_RIGHT:
             if(e.fd->len > 0) {
-                if(e.x + e.hof == e.fd->rows[e.y + e.vof].length - 1
+                if(e.x + e.hof == e.fd->rows[e.y + e.vof].length
                     && e.y + e.vof < e.fd->len - 1)
                 {
                     e.y++;
                     e.x = 0;
                     e.hof = 0;
-                } else if(e.x + e.hof == e.fd->rows[e.y + e.vof].length - 1) ;
+                } 
                 else if(e.x == ncols - 1) e.hof++;
-                else if(e.x < e.fd->rows[e.y + e.vof].length) e.x++;
+                else if(e.x + e.hof < e.fd->rows[e.y + e.vof].length + 1) e.x++;
             }
             break;
         case '.':
@@ -332,7 +332,7 @@ void editorMoveCursor(int c)
     // change position/offset of cursor if we've moved to a short line
     if(e.fd->len > 0) {
         if(e.x + e.hof > e.fd->rows[e.y + e.vof].length) {
-            e.x = e.fd->rows[e.y + e.vof].length - 1;
+            e.x = e.fd->rows[e.y + e.vof].length;
             if(e.fd->rows[e.y + e.vof].length < ncols) e.hof = 0;
         }
     }
@@ -340,6 +340,7 @@ void editorMoveCursor(int c)
     move(e.y, e.x);
 }
 
+// inserts a char at a given row and index
 void editorInsertChar(erow* row, int at, char c)
 {
     if(at < 0 || at > row->length) at = row->length;
@@ -352,14 +353,15 @@ void editorInsertChar(erow* row, int at, char c)
     row->data[row->length] = '\0';
 }   
 
+// deletes a character at a given row and index
 void editorDelChar(erow* row, int at)
 {
     if(at < 0 || at >= row->length) return;
     memmove(&row->data[at], &row->data[at + 1], row->length - at);
     row->length--;
-    editorMoveCursor(KEY_LEFT);
 }
 
+// sets the status message displayed in the status line
 void editorSetStatusMessage(const char* fmt, ...)
 {
     va_list ap;
@@ -368,6 +370,7 @@ void editorSetStatusMessage(const char* fmt, ...)
     va_end(ap);
 }
 
+// prompts the user for input and returns it 
 char* editorPrompt(char* prompt)
 {
     size_t bufsize = 128;
@@ -402,6 +405,7 @@ char* editorPrompt(char* prompt)
     }
 }
 
+// creates a blank file if the user doesn't provide one on startup
 void editorCreateFile(char* fn)
 {
     FileData* fd = newEmptyFile();
@@ -411,12 +415,14 @@ void editorCreateFile(char* fn)
     return;
 }
 
+// frees memory of a row
 void editorFreeRow(erow* row)
 {
     free(row->data);
     row->length = 0;
 }
 
+// deletes a given row
 void editorDelRow(int at)
 {
     if(at < 0 || at >= e.fd->len) return;
@@ -427,6 +433,7 @@ void editorDelRow(int at)
     e.fd->len--;
 }
 
+// appends a string to a given row
 void editorAppendStringToRow(int at, char* s, size_t len)
 {
     if(at < 0 || at >= e.fd->len) return;
@@ -438,9 +445,10 @@ void editorAppendStringToRow(int at, char* s, size_t len)
     r->length += len;
 }
 
+// adds a row at a given position
 void editorAddRow(int at, char* s, size_t len)
 {
-    if(at < 0 || at >= e.fd->len) at = 0;
+    if(at < 0 || at > e.fd->len) return;
 
     e.fd->rows = realloc(e.fd->rows, (e.fd->len + 1) * sizeof(erow));
     memmove(&e.fd->rows[at + 1], &e.fd->rows[at], (e.fd->len - at) * sizeof(erow));
@@ -454,6 +462,16 @@ void editorAddRow(int at, char* s, size_t len)
     e.fd->len++;
 }  
 
+// deletes all the characters in a given row, from a given position to the end
+void editorDelToRowEnd(int at, int from)
+{
+    erow* r = &e.fd->rows[at];
+    r->data = realloc(r->data, from + 1);
+    r->data[from] = '\0';
+    r->length = from; 
+}
+
+// save the current file, named via user prompt
 void editorSaveFileAs()
 {
     char* name = editorPrompt("Save file as: %s");
@@ -461,6 +479,7 @@ void editorSaveFileAs()
     writeToFile();
 }
 
+// free editor memory 
 void editorFree()
 {
     for(int i = 0; i < e.fd->len; i++) editorFreeRow(&e.fd->rows[i]);
@@ -471,6 +490,9 @@ void editorFree()
 /** input **/
 int handleKeypress()
 {
+    int filerow = e.y + e.vof;
+    int filecol = e.x + e.hof;
+        
     int c = editorReadKey();
     switch(c)
     {
@@ -505,11 +527,11 @@ int handleKeypress()
             break;
 
         case CTRL('d'):
-            editorDelRow(e.y + e.vof);
+            editorDelRow(filerow);
             break;
 
         case CTRL('o'):
-            editorAddRow(e.y + e.vof, " ", 1);
+            editorAddRow(filerow, " ", 1);
             e.eflag = 1;
             editorSetStatusMessage("EDIT MODE %s", e.eflag ? "ON" : "OFF");
             break;
@@ -523,24 +545,38 @@ int handleKeypress()
         case 127:
             if(e.eflag) 
             {
+                // append line to line above if we backspace at start of the line
                 if(e.x == 0 && e.y > 0) 
                 {   
                     editorMoveCursor(KEY_LEFT);
-                    editorAppendStringToRow(e.y + e.vof, e.fd->rows[e.y + e.vof + 1].data, e.fd->rows[e.y + e.vof + 1].length);
-                    editorDelRow(e.y + e.vof + 1);
+                    editorAppendStringToRow(filerow - 1, e.fd->rows[filerow].data, e.fd->rows[filerow].length);
+                    editorDelRow(filerow);
                 }
-                else editorDelChar(&e.fd->rows[e.y + e.vof], e.x - 1);
-            }
+                else {
+                    editorDelChar(&e.fd->rows[filerow], e.x - 1);
+                    editorMoveCursor(KEY_LEFT);
+                }  
+
+            } 
             break;
 
-        case '\n':
+        case 10:
+            if(filerow < e.fd->len)
+            {
+                erow* row = &e.fd->rows[filerow];
+                editorAddRow(filerow + 1, " ", 1);
+                editorAppendStringToRow(filerow + 1, &row->data[filecol], row->length - filecol);
+                editorDelChar(&e.fd->rows[filerow + 1], 0);
+                editorDelToRowEnd(filerow, filecol);
+            }
+
             break;
         
         default:
             if(c > 31 && e.fd->len > 0 && e.eflag)
             {
                 //if(e.x == 0) editorInsertChar(&e.fd->rows[e.y + e.vof], e.x, ' ');
-                editorInsertChar(&e.fd->rows[e.y + e.vof], e.x, c);
+                editorInsertChar(&e.fd->rows[filerow], e.x, c);
                 editorMoveCursor(KEY_RIGHT);
             }
             break;
